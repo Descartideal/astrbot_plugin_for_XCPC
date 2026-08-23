@@ -1,14 +1,19 @@
 """使用洛谷官网当前 JSON 接口查询公开用户资料和比赛。"""
 
 import asyncio
+import json
+import re
 import time
 from typing import Any
+from urllib.parse import unquote
 
 import requests
 
 from .models import (
     LuoguContestProfile,
     LuoguContestResult,
+    LuoguSubmission,
+    LuoguSubmissionResult,
     LuoguUserProfile,
     LuoguUserResult,
 )
@@ -19,6 +24,21 @@ class LuoguClient:
     REQUEST_TIMEOUT = 12
     MAX_CONTEST_PAGES = 3
     USER_AGENT = "AstrBot-XCPC-Luogu/0.1"
+
+    STATUS_NAMES = {
+        0: "等待评测", 1: "正在评测", 2: "编译中", 3: "运行中",
+        4: "编译错误", 5: "未知错误", 6: "系统错误", 7: "内存超限",
+        8: "时间超限", 9: "输出超限", 10: "运行错误", 11: "答案错误",
+        12: "Accepted", 13: "部分正确", 14: "文件错误", 15: "作弊",
+    }
+    LANGUAGE_NAMES = {
+        0: "C++98", 1: "C++11", 2: "Pascal", 3: "Java 8", 4: "Python 2",
+        5: "Python 3", 7: "C", 8: "C++14", 9: "C++17", 14: "Go",
+        27: "C++20", 28: "C++20 (O2)", 34: "C++23",
+    }
+
+    def __init__(self, cookie: str = "") -> None:
+        self.cookie = str(cookie or "").strip()
 
     def _headers(self, *, lentille: bool = False) -> dict[str, str]:
         headers = {
@@ -194,6 +214,112 @@ class LuoguClient:
 
     async def contest_info(self, count: int) -> LuoguContestResult:
         return await asyncio.to_thread(self._request_contests, count)
+
+    @staticmethod
+    def _decode_record_response(response: requests.Response) -> dict:
+        """兼容 lentille JSON 与普通页面中的 _feInjection 数据。"""
+        content_type = response.headers.get("content-type", "")
+        if "json" in content_type:
+            payload = response.json()
+        else:
+            match = re.search(
+                r'window\._feInjection\s*=\s*JSON\.parse\(decodeURIComponent\("([^"]+)"\)\)',
+                response.text,
+            )
+            if match is None:
+                raise ValueError("响应中没有找到提交记录数据")
+            payload = json.loads(unquote(match.group(1)))
+        if not isinstance(payload, dict):
+            raise ValueError("洛谷返回了不支持的提交记录格式")
+        return payload
+
+    def _request_submissions(self, uid: int, count: int) -> LuoguSubmissionResult:
+        if not self.cookie:
+            return LuoguSubmissionResult(
+                False,
+                "查询洛谷提交记录需要登录态，请管理员先在插件配置的 luogu_setting.cookie 中填写洛谷 Cookie",
+            )
+        uid = int(uid)
+        count = max(1, min(int(count), 10))
+        try:
+            headers = self._headers(lentille=True)
+            headers["Cookie"] = self.cookie
+            response = requests.get(
+                f"{self.BASE_URL}/record/list",
+                params={"user": uid, "page": 1},
+                headers=headers,
+                timeout=self.REQUEST_TIMEOUT,
+            )
+            response.raise_for_status()
+            payload = self._decode_record_response(response)
+            if payload.get("currentTemplate") != "RecordList":
+                raise ValueError("登录态无效或已过期，请管理员更新洛谷 Cookie")
+            data = payload.get("currentData")
+            records = data.get("records") if isinstance(data, dict) else None
+            items = records.get("result") if isinstance(records, dict) else None
+            if not isinstance(items, list):
+                raise ValueError("洛谷响应缺少 records.result")
+
+            submissions = []
+            for item in items[:count]:
+                if not isinstance(item, dict):
+                    continue
+                problem = item.get("problem") if isinstance(item.get("problem"), dict) else {}
+                user = item.get("user") if isinstance(item.get("user"), dict) else {}
+                record_id = self._optional_int(item.get("id"))
+                submit_time = self._optional_int(item.get("submitTime"))
+                status = self._optional_int(item.get("status"))
+                pid = problem.get("pid")
+                title = problem.get("title")
+                if None in (record_id, submit_time, status) or not isinstance(pid, str):
+                    continue
+                submissions.append(LuoguSubmission(
+                    id=record_id,
+                    uid=uid,
+                    username=user.get("name") if isinstance(user.get("name"), str) else str(uid),
+                    problem_id=pid,
+                    problem_title=title if isinstance(title, str) else pid,
+                    submit_time=submit_time,
+                    status=status,
+                    score=self._optional_int(item.get("score")),
+                    language=item.get("language") if isinstance(item.get("language"), (int, str)) else None,
+                    time_ms=self._optional_int(item.get("time")),
+                    memory_kb=self._optional_int(item.get("memory")),
+                ))
+            if not submissions:
+                return LuoguSubmissionResult(True, f"洛谷 UID {uid} 暂无提交记录", [])
+            result = LuoguSubmissionResult(True, "", submissions)
+            result.message = self.format_submissions(result)
+            return result
+        except requests.exceptions.Timeout:
+            return LuoguSubmissionResult(False, "洛谷没有在 12 秒内返回提交记录，请求超时")
+        except (requests.exceptions.RequestException, ValueError, json.JSONDecodeError) as exc:
+            return LuoguSubmissionResult(False, f"请求洛谷提交记录失败：{exc}")
+
+    async def submission_info(self, uid: int, count: int = 5) -> LuoguSubmissionResult:
+        return await asyncio.to_thread(self._request_submissions, uid, count)
+
+    def format_submissions(self, result: LuoguSubmissionResult) -> str:
+        if not result.ok or not result.submissions:
+            return result.message
+        lines = [f"{result.submissions[0].username}（UID {result.submissions[0].uid}）最近提交："]
+        for index, submission in enumerate(result.submissions, 1):
+            status = self.STATUS_NAMES.get(submission.status, f"状态 #{submission.status}")
+            language = self.LANGUAGE_NAMES.get(submission.language, f"语言 #{submission.language}")
+            score = "未知" if submission.score is None else str(submission.score)
+            resource = []
+            if submission.time_ms is not None:
+                resource.append(f"{submission.time_ms} ms")
+            if submission.memory_kb is not None:
+                resource.append(f"{submission.memory_kb} KB")
+            lines.extend([
+                f"\n{index}. {submission.problem_id} {submission.problem_title}",
+                f"结果：{status}｜{score} 分｜{language}",
+                f"时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(submission.submit_time))}",
+                f"资源：{' / '.join(resource) if resource else '未知'}",
+                f"记录：https://www.luogu.com.cn/record/{submission.id}",
+            ])
+        return "\n".join(lines)
 
     @staticmethod
     def format_contests(result: LuoguContestResult) -> str:

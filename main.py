@@ -31,7 +31,7 @@ T2I_CLEANUP_INTERVAL_SECONDS = 60 * 60
     PLUGIN_NAME,
     "Bricks0411",
     "基于 Astrbot 框架的简单插件，为算法竞赛选手提供各种功能",
-    "0.1.0",
+    "0.2.0",
 )
 class PluginForXCPC(Star):
     """XCPC 辅助插件主类，负责 AstrBot 生命周期和命令注册。"""
@@ -56,7 +56,9 @@ class PluginForXCPC(Star):
         self.user_status_handler = UserStatusHandler()
         self.contest_info_handler = ContestInfoHandler()
         self.contest_card_renderer = ContestCardRenderer()
-        self.luogu_client = LuoguClient()
+        luogu_setting = config.get("luogu_setting", {})
+        self.luogu_submission_number = int(luogu_setting.get("submission_number", 5))
+        self.luogu_client = LuoguClient(cookie=luogu_setting.get("cookie", ""))
         self.luogu_user_card_renderer = LuoguUserCardRenderer()
         self.luogu_contest_card_renderer = LuoguContestCardRenderer()
         self.user_db_handler = DataStorageHandler(db_path=self._build_user_db_path())
@@ -339,6 +341,45 @@ class PluginForXCPC(Star):
         except Exception as e:
             logger.error(f"渲染洛谷比赛卡片失败，回退为文本: {e}")
             yield event.plain_result(fallback)
+
+    @filter.command("提交洛谷", alias={"洛谷提交", "记录洛谷"})
+    async def GetLuoguSubmissions(self, event: AstrMessageEvent):
+        """查询指定 UID 或当前绑定账号的最近洛谷提交记录。"""
+        if self.enable is False:
+            return
+        args = self.GetCommandArgs(event.get_messages(), {"提交洛谷", "洛谷提交", "记录洛谷"})
+        if len(args) > 2:
+            yield event.plain_result("用法：/提交洛谷 [UID] [数量 1-10]\n不填 UID 时查询当前会话绑定账号")
+            return
+
+        uid_text = args[0] if args else ""
+        count_text = args[1] if len(args) == 2 else ""
+        if not uid_text:
+            try:
+                binding = await self.user_db_handler.aget_luogu_binding(
+                    event.get_sender_id(), self._get_event_session_id(event)
+                )
+            except ValueError:
+                binding = None
+            if binding is None:
+                yield event.plain_result("请先使用 /绑定洛谷 <UID>，或直接使用 /提交洛谷 <UID>")
+                return
+            uid = binding.luogu_uid
+        elif not uid_text.isdigit() or int(uid_text) <= 0:
+            yield event.plain_result("洛谷 UID 必须是正整数")
+            return
+        else:
+            uid = int(uid_text)
+
+        if count_text:
+            if not count_text.isdigit() or not 1 <= int(count_text) <= 10:
+                yield event.plain_result("提交数量必须是 1 到 10 的整数")
+                return
+            count = int(count_text)
+        else:
+            count = max(1, min(self.luogu_submission_number, 10))
+        result = await self.luogu_client.submission_info(uid, count)
+        yield event.plain_result(result.message)
 
     async def _bind_luogu_account(
         self,

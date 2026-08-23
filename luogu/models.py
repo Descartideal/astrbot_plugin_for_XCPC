@@ -46,3 +46,25 @@ class LuoguContestResult:
     ok: bool
     message: str
     contests: list[LuoguContestProfile] | None = None
+
+
+@dataclass(slots=True)
+class LuoguSubmission:
+    id: int
+    uid: int
+    username: str
+    problem_id: str
+    problem_title: str
+    submit_time: int
+    status: int
+    score: int | None
+    language: int | str | None
+    time_ms: int | None
+    memory_kb: int | None
+
+
+@dataclass(slots=True)
+class LuoguSubmissionResult:
+    ok: bool
+    message: str
+    submissions: list[LuoguSubmission] | None = None

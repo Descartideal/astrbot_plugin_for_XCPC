@@ -1,5 +1,6 @@
 import time
 import unittest
+from unittest.mock import patch
 
 from luogu.client import LuoguClient
 
@@ -55,6 +56,39 @@ class LuoguClientTest(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual([contest.id for contest in result.contests], [1, 2])
+
+    def test_submissions_require_cookie(self):
+        result = LuoguClient()._request_submissions(1080507, 5)
+        self.assertFalse(result.ok)
+        self.assertIn("Cookie", result.message)
+
+    @patch("luogu.client.requests.get")
+    def test_submission_page_maps_record_fields(self, get):
+        payload = {
+            "currentTemplate": "RecordList",
+            "currentData": {"records": {"result": [{
+                "id": 294911668,
+                "submitTime": 1787507283,
+                "status": 12,
+                "score": 100,
+                "language": 34,
+                "time": 1164,
+                "memory": 28964,
+                "problem": {"pid": "U694435", "title": "D. Prefix Teleporter Sum"},
+                "user": {"uid": 1080507, "name": "Descartideal"},
+            }]}}
+        }
+        response = get.return_value
+        response.headers = {"content-type": "application/json"}
+        response.json.return_value = payload
+        response.raise_for_status.return_value = None
+
+        result = LuoguClient(cookie="sid=test")._request_submissions(1080507, 5)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.submissions[0].problem_id, "U694435")
+        self.assertEqual(result.submissions[0].status, 12)
+        self.assertIn("Accepted", result.message)
 
 
 if __name__ == "__main__":

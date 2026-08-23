@@ -61,6 +61,25 @@
       }
     }
   },
+  "luogu_setting": {
+    "description": "洛谷提交记录设置",
+    "type": "object",
+    "items": {
+      "cookie": {
+        "description": "洛谷 Cookie",
+        "type": "string",
+        "hint": "用于查询提交记录。请从已登录洛谷的浏览器请求中复制完整 Cookie，仅保存在本机配置中，切勿提交到 GitHub 或发送到群聊。",
+        "default": ""
+      },
+      "submission_number": {
+        "description": "默认显示的提交数量",
+        "type": "int",
+        "hint": "使用 /提交洛谷 且未指定数量时返回的记录条数",
+        "slider": {"min": 1, "max": 10, "step": 1},
+        "default": 5
+      }
+    }
+  },
   "loop_time": {
     "description": "插件轮询时间",
     "type": "int",
