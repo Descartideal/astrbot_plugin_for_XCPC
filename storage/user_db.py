@@ -644,8 +644,14 @@ class DataStorageHandler:
             rows = self._conn.execute(sql).fetchall()
         return [self._row_to_luogu_binding(row) for row in rows]
 
-    async def alist_luogu_bindings(self, *args) -> list[LuoguBinding]:
-        return await asyncio.to_thread(self.list_luogu_bindings, *args)
+    async def alist_luogu_bindings(
+        self,
+        only_broadcast_enabled: bool = False,
+    ) -> list[LuoguBinding]:
+        return await asyncio.to_thread(
+            self.list_luogu_bindings,
+            only_broadcast_enabled=only_broadcast_enabled,
+        )
 
     def set_luogu_broadcast_enabled(
         self,

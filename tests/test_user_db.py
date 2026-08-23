@@ -231,6 +231,10 @@ class AsyncDataStorageHandlerTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(updated_luogu.last_ac_fingerprint, "294911668")
         self.assertEqual(await self.storage.alist_luogu_bindings(), [updated_luogu])
+        self.assertEqual(
+            await self.storage.alist_luogu_bindings(only_broadcast_enabled=True),
+            [],
+        )
 
 
 if __name__ == "__main__":
