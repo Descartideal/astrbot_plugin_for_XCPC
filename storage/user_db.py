@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Iterable
 
-from .models import CodeforcesBinding
+from .models import CodeforcesBinding, LuoguBinding
 
 class DataStorageHandler:
     """基于 SQLite 实现的 cf 信息绑定模块"""
@@ -73,6 +73,21 @@ class DataStorageHandler:
 
                 CREATE UNIQUE INDEX IF NOT EXISTS uq_bind_group_handle
                 ON cf_bindings(group_id, cf_handle COLLATE NOCASE);
+
+                CREATE TABLE IF NOT EXISTS luogu_bindings (
+                    user_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL,
+                    luogu_uid INTEGER NOT NULL CHECK (luogu_uid > 0),
+                    luogu_name TEXT NOT NULL,
+                    updated_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (user_id, group_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_luogu_bind_group
+                ON luogu_bindings(group_id);
+
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_luogu_bind_group_uid
+                ON luogu_bindings(group_id, luogu_uid);
                 """
             )
 
@@ -479,6 +494,104 @@ class DataStorageHandler:
             group_id,
             cf_handle
         )
+
+    @staticmethod
+    def _row_to_luogu_binding(row: sqlite3.Row) -> LuoguBinding:
+        return LuoguBinding(
+            user_id=row["user_id"],
+            group_id=row["group_id"],
+            luogu_uid=int(row["luogu_uid"]),
+            luogu_name=row["luogu_name"],
+            updated_at=int(row["updated_at"]),
+        )
+
+    def bind_luogu_user(
+        self,
+        user_id: str | int,
+        group_id: str | int,
+        luogu_uid: int,
+        luogu_name: str,
+    ) -> LuoguBinding:
+        """按数字 UID 绑定洛谷账号；同一会话内 UID 唯一。"""
+        user_id = self._normalize_id(user_id)
+        group_id = self._normalize_id(group_id)
+        if isinstance(luogu_uid, bool) or int(luogu_uid) <= 0:
+            raise ValueError("luogu_uid must be a positive integer")
+        luogu_uid = int(luogu_uid)
+        luogu_name = str(luogu_name).strip()
+        if not luogu_name:
+            raise ValueError("luogu_name cannot be empty")
+        updated_at = int(time.time())
+
+        with self._lock:
+            self._run_write(
+                """
+                INSERT INTO luogu_bindings (
+                    user_id, group_id, luogu_uid, luogu_name, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, group_id) DO UPDATE SET
+                    luogu_uid = excluded.luogu_uid,
+                    luogu_name = excluded.luogu_name,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, group_id, luogu_uid, luogu_name, updated_at),
+            )
+        return LuoguBinding(user_id, group_id, luogu_uid, luogu_name, updated_at)
+
+    async def abind_luogu_user(self, *args) -> LuoguBinding:
+        return await asyncio.to_thread(self.bind_luogu_user, *args)
+
+    def get_luogu_binding(
+        self,
+        user_id: str | int,
+        group_id: str | int,
+    ) -> LuoguBinding | None:
+        user_id = self._normalize_id(user_id)
+        group_id = self._normalize_id(group_id)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT user_id, group_id, luogu_uid, luogu_name, updated_at
+                FROM luogu_bindings WHERE user_id = ? AND group_id = ?
+                """,
+                (user_id, group_id),
+            ).fetchone()
+        return self._row_to_luogu_binding(row) if row is not None else None
+
+    async def aget_luogu_binding(self, *args) -> LuoguBinding | None:
+        return await asyncio.to_thread(self.get_luogu_binding, *args)
+
+    def get_group_luogu_binding_by_uid(
+        self,
+        group_id: str | int,
+        luogu_uid: int,
+    ) -> LuoguBinding | None:
+        group_id = self._normalize_id(group_id)
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT user_id, group_id, luogu_uid, luogu_name, updated_at
+                FROM luogu_bindings WHERE group_id = ? AND luogu_uid = ?
+                """,
+                (group_id, int(luogu_uid)),
+            ).fetchone()
+        return self._row_to_luogu_binding(row) if row is not None else None
+
+    async def aget_group_luogu_binding_by_uid(self, *args) -> LuoguBinding | None:
+        return await asyncio.to_thread(self.get_group_luogu_binding_by_uid, *args)
+
+    def unbind_luogu_user(self, user_id: str | int, group_id: str | int) -> bool:
+        user_id = self._normalize_id(user_id)
+        group_id = self._normalize_id(group_id)
+        with self._lock:
+            cursor = self._run_write(
+                "DELETE FROM luogu_bindings WHERE user_id = ? AND group_id = ?",
+                (user_id, group_id),
+            )
+            return cursor.rowcount > 0
+
+    async def aunbind_luogu_user(self, *args) -> bool:
+        return await asyncio.to_thread(self.unbind_luogu_user, *args)
 
     def close(self) -> None:
         with self._lock:
