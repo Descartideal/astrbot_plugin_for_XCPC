@@ -31,7 +31,7 @@ T2I_CLEANUP_INTERVAL_SECONDS = 60 * 60
     PLUGIN_NAME,
     "Bricks0411",
     "基于 Astrbot 框架的简单插件，为算法竞赛选手提供各种功能",
-    "0.3.1",
+    "0.3.2",
 )
 class PluginForXCPC(Star):
     """XCPC 辅助插件主类，负责 AstrBot 生命周期和命令注册。"""

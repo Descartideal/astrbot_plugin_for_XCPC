@@ -252,11 +252,20 @@ class LuoguClient:
             )
             response.raise_for_status()
             payload = self._decode_record_response(response)
-            if payload.get("currentTemplate") != "RecordList":
-                raise ValueError("登录态无效或已过期，请管理员更新洛谷 Cookie")
+            # 洛谷目前并存两种 lentille 响应结构：
+            # 旧版 currentTemplate/currentData 与新版 instance/template/data。
             data = payload.get("currentData")
+            if not isinstance(data, dict):
+                data = payload.get("data")
             records = data.get("records") if isinstance(data, dict) else None
             items = records.get("result") if isinstance(records, dict) else None
+            is_login_page = (
+                payload.get("currentTemplate") in {"AuthLogin", "Login"}
+                or payload.get("instance") == "auth"
+                or payload.get("template") == "login"
+            )
+            if is_login_page:
+                raise ValueError("登录态无效或已过期，请管理员更新洛谷 Cookie")
             if not isinstance(items, list):
                 raise ValueError("洛谷响应缺少 records.result")
 

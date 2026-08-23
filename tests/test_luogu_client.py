@@ -90,6 +90,51 @@ class LuoguClientTest(unittest.TestCase):
         self.assertEqual(result.submissions[0].status, 12)
         self.assertIn("Accepted", result.message)
 
+    @patch("luogu.client.requests.get")
+    def test_modern_lentille_submission_shape_is_supported(self, get):
+        response = get.return_value
+        response.headers = {"content-type": "application/json"}
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "instance": "record",
+            "template": "list",
+            "status": 200,
+            "data": {"records": {"result": [{
+                "id": 294911668,
+                "submitTime": 1787507283,
+                "status": 12,
+                "score": 100,
+                "language": 34,
+                "time": 1164,
+                "memory": 28964,
+                "problem": {"pid": "U694435", "title": "D. Prefix Teleporter Sum"},
+                "user": {"uid": 1080507, "name": "Descartideal"},
+            }]}}
+        }
+
+        result = LuoguClient(cookie="__client_id=test")._request_submissions(1080507, 1)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.submissions[0].id, 294911668)
+
+    @patch("luogu.client.requests.get")
+    def test_modern_login_response_reports_expired_cookie(self, get):
+        response = get.return_value
+        response.headers = {"content-type": "application/json"}
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "instance": "auth",
+            "template": "login",
+            "status": 200,
+            "data": {"webauthn": {}},
+            "user": None,
+        }
+
+        result = LuoguClient(cookie="__client_id=expired")._request_submissions(1080507, 1)
+
+        self.assertFalse(result.ok)
+        self.assertIn("登录态无效或已过期", result.message)
+
 
 if __name__ == "__main__":
     unittest.main()
