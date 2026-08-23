@@ -134,6 +134,57 @@ class DataStorageHandlerTest(unittest.TestCase):
         self.assertTrue(self.storage.unbind_luogu_user("1001", "group-1"))
         self.assertIsNone(self.storage.get_luogu_binding("1001", "group-1"))
 
+    def test_luogu_broadcast_switch_and_fingerprint_are_persisted(self):
+        original = self.storage.bind_luogu_user("1001", "group-1", 8457, "chen_zhe")
+        self.assertTrue(original.enable_broadcast)
+        self.assertIsNone(original.last_ac_fingerprint)
+
+        disabled = self.storage.set_luogu_broadcast_enabled("1001", "group-1", False)
+        updated = self.storage.update_luogu_last_ac_fingerprint(
+            "1001", "group-1", "294911668"
+        )
+
+        self.assertFalse(disabled.enable_broadcast)
+        self.assertFalse(updated.enable_broadcast)
+        self.assertEqual(updated.last_ac_fingerprint, "294911668")
+        self.assertEqual(self.storage.list_luogu_bindings(True), [])
+        self.assertEqual(self.storage.list_luogu_bindings(), [updated])
+
+    def test_rebinding_different_luogu_uid_resets_fingerprint(self):
+        self.storage.bind_luogu_user("1001", "group-1", 1, "kkksc03")
+        self.storage.set_luogu_broadcast_enabled("1001", "group-1", False)
+        self.storage.update_luogu_last_ac_fingerprint("1001", "group-1", "123")
+
+        replaced = self.storage.bind_luogu_user("1001", "group-1", 8457, "chen_zhe")
+
+        self.assertFalse(replaced.enable_broadcast)
+        self.assertIsNone(replaced.last_ac_fingerprint)
+
+    def test_legacy_luogu_table_is_migrated_without_data_loss(self):
+        self.storage.close()
+        legacy_path = Path(self.temp_dir.name) / "legacy.sqlite3"
+        connection = sqlite3.connect(legacy_path)
+        connection.executescript("""
+            CREATE TABLE luogu_bindings (
+                user_id TEXT NOT NULL,
+                group_id TEXT NOT NULL,
+                luogu_uid INTEGER NOT NULL,
+                luogu_name TEXT NOT NULL,
+                updated_at INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, group_id)
+            );
+            INSERT INTO luogu_bindings VALUES ('1001', 'group-1', 1080507, 'Descartideal', 1);
+        """)
+        connection.commit()
+        connection.close()
+
+        self.storage = DataStorageHandler(legacy_path)
+        migrated = self.storage.get_luogu_binding("1001", "group-1")
+
+        self.assertEqual(migrated.luogu_uid, 1080507)
+        self.assertTrue(migrated.enable_broadcast)
+        self.assertIsNone(migrated.last_ac_fingerprint)
+
 
 class AsyncDataStorageHandlerTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -166,6 +217,20 @@ class AsyncDataStorageHandlerTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await self.storage.aunbind_user("1001", "2002"))
         self.assertIsNone(await self.storage.aget_binding("1001", "2002"))
+
+        luogu = await self.storage.abind_luogu_user(
+            "1001", "2002", 1080507, "Descartideal"
+        )
+        self.assertEqual(await self.storage.aget_luogu_binding("1001", "2002"), luogu)
+        updated_luogu = await self.storage.aset_luogu_broadcast_enabled(
+            "1001", "2002", False
+        )
+        self.assertFalse(updated_luogu.enable_broadcast)
+        updated_luogu = await self.storage.aupdate_luogu_last_ac_fingerprint(
+            "1001", "2002", "294911668"
+        )
+        self.assertEqual(updated_luogu.last_ac_fingerprint, "294911668")
+        self.assertEqual(await self.storage.alist_luogu_bindings(), [updated_luogu])
 
 
 if __name__ == "__main__":

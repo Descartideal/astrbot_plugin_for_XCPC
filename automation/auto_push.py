@@ -18,6 +18,7 @@ class AutomationPushHandler:
         *,
         user_status_handler,
         contest_info_handler,
+        luogu_client,
         user_db_handler,
         loop_time: int,
         enable_getter: Callable[[], bool],
@@ -29,6 +30,7 @@ class AutomationPushHandler:
     ) -> None:
         self.user_status_handler = user_status_handler
         self.contest_info_handler = contest_info_handler
+        self.luogu_client = luogu_client
         self.user_db_handler = user_db_handler
         self.loop_time = loop_time
         self.enable_getter = enable_getter
@@ -46,6 +48,7 @@ class AutomationPushHandler:
         self._submission_scheduler_task: asyncio.Task | None = None
         self._api_request_lock = asyncio.Lock()
         self._last_api_request_time: float | None = None
+        self._luogu_cookie_warning_logged = False
 
         self._configure_contest_push()
 
@@ -223,6 +226,72 @@ class AutomationPushHandler:
             logger.info(f"查询 handle: {cf_handle}")
             await self._poll_handle_submissions(cf_handle, handle_bindings)
 
+        await self._poll_luogu_submissions()
+
+    async def _poll_luogu_submissions(self) -> None:
+        """按 UID 去重轮询洛谷最新提交并播报新 AC。"""
+        bindings = await self.user_db_handler.alist_luogu_bindings(
+            only_broadcast_enabled=True
+        )
+        if not bindings:
+            return
+        if not self.luogu_client.cookie:
+            if not self._luogu_cookie_warning_logged:
+                logger.warning("未配置洛谷 Cookie，跳过洛谷 AC 自动播报")
+                self._luogu_cookie_warning_logged = True
+            return
+
+        uid_map = {}
+        for binding in bindings:
+            uid_map.setdefault(binding.luogu_uid, []).append(binding)
+        for uid, uid_bindings in uid_map.items():
+            try:
+                await self._wait_for_api_request_slot()
+                result = await self.luogu_client.submission_info(uid, 1)
+            except Exception as exc:
+                logger.error(f"查询洛谷 UID {uid} 提交记录出错: {exc}")
+                continue
+            if not result.ok:
+                logger.warning(f"查询洛谷 UID {uid} 提交记录失败: {result.message}")
+                continue
+            if not result.submissions:
+                continue
+            await self._process_luogu_submission(uid_bindings, result.submissions[0])
+
+    async def _process_luogu_submission(self, bindings: list, submission) -> None:
+        fingerprint = str(submission.id)
+        is_ac = submission.status == 12
+        for binding in bindings:
+            if binding.last_ac_fingerprint == fingerprint:
+                continue
+            if binding.last_ac_fingerprint is None:
+                await self.user_db_handler.aupdate_luogu_last_ac_fingerprint(
+                    binding.user_id, binding.group_id,
+                    fingerprint if is_ac else f"baseline:{fingerprint}",
+                )
+                logger.info(
+                    f"为洛谷 UID {binding.luogu_uid} 在会话 {binding.group_id} 初始化提交指纹"
+                )
+                continue
+            if not is_ac:
+                continue
+            try:
+                await self.message_sender(
+                    binding.group_id,
+                    self._build_luogu_submission_message(binding, submission),
+                )
+            except Exception as exc:
+                logger.error(
+                    f"向会话 {binding.group_id} 播报洛谷 UID {binding.luogu_uid} 的新 AC 失败: {exc}"
+                )
+                continue
+            await self.user_db_handler.aupdate_luogu_last_ac_fingerprint(
+                binding.user_id, binding.group_id, fingerprint
+            )
+            logger.info(
+                f"已经向会话 {binding.group_id} 播报洛谷 UID {binding.luogu_uid} 的新 AC"
+            )
+
     async def _poll_handle_submissions(self, cf_handle: str, handle_bindings: list) -> None:
         """查询并处理单个 Codeforces handle 的最新提交"""
         try:
@@ -336,6 +405,24 @@ class AutomationPushHandler:
                 f"题目链接: {problem_url}",
             ]
         )
+
+    def _build_luogu_submission_message(self, binding, submission) -> str:
+        language = self.luogu_client.LANGUAGE_NAMES.get(
+            submission.language, f"语言 #{submission.language}"
+        )
+        submit_time = datetime.datetime.fromtimestamp(submission.submit_time).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        return "\n".join([
+            "检测到新的洛谷 AC 提交！",
+            f"用户: {binding.luogu_name} (UID: {binding.luogu_uid}，平台用户: {binding.user_id})",
+            f"题目: {submission.problem_id} {submission.problem_title}",
+            f"得分: {submission.score if submission.score is not None else 100}",
+            f"语言: {language}",
+            f"提交时间: {submit_time}",
+            f"题目链接: https://www.luogu.com.cn/problem/{submission.problem_id}",
+            f"提交记录: https://www.luogu.com.cn/record/{submission.id}",
+        ])
 
     @staticmethod
     def build_contest_message(result) -> str:

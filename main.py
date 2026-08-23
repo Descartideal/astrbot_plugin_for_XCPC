@@ -31,7 +31,7 @@ T2I_CLEANUP_INTERVAL_SECONDS = 60 * 60
     PLUGIN_NAME,
     "Bricks0411",
     "基于 Astrbot 框架的简单插件，为算法竞赛选手提供各种功能",
-    "0.2.0",
+    "0.3.0",
 )
 class PluginForXCPC(Star):
     """XCPC 辅助插件主类，负责 AstrBot 生命周期和命令注册。"""
@@ -65,6 +65,7 @@ class PluginForXCPC(Star):
         self.automation_push_handler = AutomationPushHandler(
             user_status_handler=self.user_status_handler,
             contest_info_handler=self.contest_info_handler,
+            luogu_client=self.luogu_client,
             user_db_handler=self.user_db_handler,
             loop_time=self.loop_time,
             enable_getter=lambda: self.enable,
@@ -475,7 +476,8 @@ class PluginForXCPC(Star):
             yield event.plain_result("您还没有绑定洛谷账号")
             return
         yield event.plain_result(
-            f"当前绑定：{binding.luogu_name}（洛谷 UID {binding.luogu_uid}）"
+            f"当前绑定：{binding.luogu_name}（洛谷 UID {binding.luogu_uid}）\n"
+            f"AC 自动播报：{'已开启' if binding.enable_broadcast else '已关闭'}"
         )
 
     @filter.command("解绑洛谷")
@@ -488,6 +490,32 @@ class PluginForXCPC(Star):
             self._get_event_session_id(event),
         )
         yield event.plain_result("洛谷解绑成功" if removed else "没有洛谷绑定记录")
+
+    @filter.command("显示记录洛谷")
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def EnableLuoguBroadcast(self, event: AstrMessageEvent):
+        if self.enable is False:
+            return
+        binding = await self.user_db_handler.aset_luogu_broadcast_enabled(
+            event.get_sender_id(), self._get_event_session_id(event), True
+        )
+        if binding is None:
+            yield event.plain_result("您还没有绑定洛谷账号，请先使用 /绑定洛谷 <UID>")
+            return
+        yield event.plain_result("已开启洛谷 AC 自动播报")
+
+    @filter.command("隐藏记录洛谷")
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def DisableLuoguBroadcast(self, event: AstrMessageEvent):
+        if self.enable is False:
+            return
+        binding = await self.user_db_handler.aset_luogu_broadcast_enabled(
+            event.get_sender_id(), self._get_event_session_id(event), False
+        )
+        if binding is None:
+            yield event.plain_result("您还没有绑定洛谷账号，请先使用 /绑定洛谷 <UID>")
+            return
+        yield event.plain_result("已关闭洛谷 AC 自动播报")
 
 
     @filter.command("绑定", alias={"绑定cf"})

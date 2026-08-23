@@ -21,4 +21,6 @@ class LuoguBinding:
     group_id: str
     luogu_uid: int
     luogu_name: str
+    enable_broadcast: bool = True
+    last_ac_fingerprint: str | None = None
     updated_at: int = 0

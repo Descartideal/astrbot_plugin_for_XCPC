@@ -21,6 +21,7 @@
 self.automation_push_handler = AutomationPushHandler(
     user_status_handler=self.user_status_handler,
     contest_info_handler=self.contest_info_handler,
+    luogu_client=self.luogu_client,
     user_db_handler=self.user_db_handler,
     loop_time=self.loop_time,
     enable_getter=lambda: self.enable,

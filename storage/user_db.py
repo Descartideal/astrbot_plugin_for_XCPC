@@ -79,6 +79,9 @@ class DataStorageHandler:
                     group_id TEXT NOT NULL,
                     luogu_uid INTEGER NOT NULL CHECK (luogu_uid > 0),
                     luogu_name TEXT NOT NULL,
+                    enable_broadcast INTEGER NOT NULL DEFAULT 1
+                        CHECK (enable_broadcast IN (0, 1)),
+                    last_ac_fingerprint TEXT DEFAULT NULL,
                     updated_at INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (user_id, group_id)
                 );
@@ -90,6 +93,22 @@ class DataStorageHandler:
                 ON luogu_bindings(group_id, luogu_uid);
                 """
             )
+            # 从 v0.1/v0.2 原表原位升级，不重建、不清空任何绑定数据。
+            luogu_columns = {
+                row["name"]
+                for row in self._conn.execute("PRAGMA table_info(luogu_bindings)")
+            }
+            if "enable_broadcast" not in luogu_columns:
+                self._conn.execute(
+                    "ALTER TABLE luogu_bindings ADD COLUMN "
+                    "enable_broadcast INTEGER NOT NULL DEFAULT 1"
+                )
+            if "last_ac_fingerprint" not in luogu_columns:
+                self._conn.execute(
+                    "ALTER TABLE luogu_bindings ADD COLUMN "
+                    "last_ac_fingerprint TEXT DEFAULT NULL"
+                )
+            self._conn.commit()
 
     def _run_write(self, sql: str, params: Iterable[object] = ()) -> sqlite3.Cursor:
         """写操作逻辑：线程先获取锁，然后通过事务提交修改或回滚修改"""
@@ -502,6 +521,8 @@ class DataStorageHandler:
             group_id=row["group_id"],
             luogu_uid=int(row["luogu_uid"]),
             luogu_name=row["luogu_name"],
+            enable_broadcast=bool(row["enable_broadcast"]),
+            last_ac_fingerprint=row["last_ac_fingerprint"],
             updated_at=int(row["updated_at"]),
         )
 
@@ -524,19 +545,44 @@ class DataStorageHandler:
         updated_at = int(time.time())
 
         with self._lock:
+            current_row = self._conn.execute(
+                """
+                SELECT luogu_uid, enable_broadcast, last_ac_fingerprint
+                FROM luogu_bindings WHERE user_id = ? AND group_id = ?
+                """,
+                (user_id, group_id),
+            ).fetchone()
+            enable_broadcast = (
+                bool(current_row["enable_broadcast"])
+                if current_row is not None else True
+            )
+            last_ac_fingerprint = (
+                current_row["last_ac_fingerprint"]
+                if current_row is not None and int(current_row["luogu_uid"]) == luogu_uid
+                else None
+            )
             self._run_write(
                 """
                 INSERT INTO luogu_bindings (
-                    user_id, group_id, luogu_uid, luogu_name, updated_at
-                ) VALUES (?, ?, ?, ?, ?)
+                    user_id, group_id, luogu_uid, luogu_name, enable_broadcast,
+                    last_ac_fingerprint, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, group_id) DO UPDATE SET
                     luogu_uid = excluded.luogu_uid,
                     luogu_name = excluded.luogu_name,
+                    enable_broadcast = excluded.enable_broadcast,
+                    last_ac_fingerprint = excluded.last_ac_fingerprint,
                     updated_at = excluded.updated_at
                 """,
-                (user_id, group_id, luogu_uid, luogu_name, updated_at),
+                (
+                    user_id, group_id, luogu_uid, luogu_name,
+                    int(enable_broadcast), last_ac_fingerprint, updated_at,
+                ),
             )
-        return LuoguBinding(user_id, group_id, luogu_uid, luogu_name, updated_at)
+        return LuoguBinding(
+            user_id, group_id, luogu_uid, luogu_name,
+            enable_broadcast, last_ac_fingerprint, updated_at,
+        )
 
     async def abind_luogu_user(self, *args) -> LuoguBinding:
         return await asyncio.to_thread(self.bind_luogu_user, *args)
@@ -551,7 +597,8 @@ class DataStorageHandler:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT user_id, group_id, luogu_uid, luogu_name, updated_at
+                SELECT user_id, group_id, luogu_uid, luogu_name,
+                       enable_broadcast, last_ac_fingerprint, updated_at
                 FROM luogu_bindings WHERE user_id = ? AND group_id = ?
                 """,
                 (user_id, group_id),
@@ -570,7 +617,8 @@ class DataStorageHandler:
         with self._lock:
             row = self._conn.execute(
                 """
-                SELECT user_id, group_id, luogu_uid, luogu_name, updated_at
+                SELECT user_id, group_id, luogu_uid, luogu_name,
+                       enable_broadcast, last_ac_fingerprint, updated_at
                 FROM luogu_bindings WHERE group_id = ? AND luogu_uid = ?
                 """,
                 (group_id, int(luogu_uid)),
@@ -579,6 +627,75 @@ class DataStorageHandler:
 
     async def aget_group_luogu_binding_by_uid(self, *args) -> LuoguBinding | None:
         return await asyncio.to_thread(self.get_group_luogu_binding_by_uid, *args)
+
+    def list_luogu_bindings(
+        self,
+        only_broadcast_enabled: bool = False,
+    ) -> list[LuoguBinding]:
+        sql = (
+            "SELECT user_id, group_id, luogu_uid, luogu_name, "
+            "enable_broadcast, last_ac_fingerprint, updated_at "
+            "FROM luogu_bindings"
+        )
+        if only_broadcast_enabled:
+            sql += " WHERE enable_broadcast = 1"
+        sql += " ORDER BY luogu_uid, group_id, user_id"
+        with self._lock:
+            rows = self._conn.execute(sql).fetchall()
+        return [self._row_to_luogu_binding(row) for row in rows]
+
+    async def alist_luogu_bindings(self, *args) -> list[LuoguBinding]:
+        return await asyncio.to_thread(self.list_luogu_bindings, *args)
+
+    def set_luogu_broadcast_enabled(
+        self,
+        user_id: str | int,
+        group_id: str | int,
+        enabled: bool,
+    ) -> LuoguBinding | None:
+        user_id = self._normalize_id(user_id)
+        group_id = self._normalize_id(group_id)
+        updated_at = int(time.time())
+        with self._lock:
+            cursor = self._run_write(
+                """
+                UPDATE luogu_bindings
+                SET enable_broadcast = ?, updated_at = ?
+                WHERE user_id = ? AND group_id = ?
+                """,
+                (int(enabled), updated_at, user_id, group_id),
+            )
+            if cursor.rowcount <= 0:
+                return None
+        return self.get_luogu_binding(user_id, group_id)
+
+    async def aset_luogu_broadcast_enabled(self, *args) -> LuoguBinding | None:
+        return await asyncio.to_thread(self.set_luogu_broadcast_enabled, *args)
+
+    def update_luogu_last_ac_fingerprint(
+        self,
+        user_id: str | int,
+        group_id: str | int,
+        fingerprint: str | None,
+    ) -> LuoguBinding | None:
+        user_id = self._normalize_id(user_id)
+        group_id = self._normalize_id(group_id)
+        updated_at = int(time.time())
+        with self._lock:
+            cursor = self._run_write(
+                """
+                UPDATE luogu_bindings
+                SET last_ac_fingerprint = ?, updated_at = ?
+                WHERE user_id = ? AND group_id = ?
+                """,
+                (fingerprint, updated_at, user_id, group_id),
+            )
+            if cursor.rowcount <= 0:
+                return None
+        return self.get_luogu_binding(user_id, group_id)
+
+    async def aupdate_luogu_last_ac_fingerprint(self, *args) -> LuoguBinding | None:
+        return await asyncio.to_thread(self.update_luogu_last_ac_fingerprint, *args)
 
     def unbind_luogu_user(self, user_id: str | int, group_id: str | int) -> bool:
         user_id = self._normalize_id(user_id)
