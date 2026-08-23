@@ -11,3 +11,14 @@ class CodeforcesBinding:
     enable_broadcast: bool = True
     last_ac_fingerprint: str | None = None
     updated_at: int = 0
+
+
+@dataclass(slots=True, frozen=True)
+class LuoguBinding:
+    """平台用户在某个 AstrBot 会话中的洛谷 UID 绑定。"""
+
+    user_id: str
+    group_id: str
+    luogu_uid: int
+    luogu_name: str
+    updated_at: int = 0

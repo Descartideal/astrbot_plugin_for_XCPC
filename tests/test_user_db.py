@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 
 from storage.user_db import DataStorageHandler
@@ -26,7 +27,7 @@ class DataStorageHandlerTest(unittest.TestCase):
         self.assertGreater(binding.updated_at, 0)
         self.assertEqual(self.storage.get_binding("1001", "2002"), binding)
 
-    def test_bind_user_updates_handle_and_preserves_existing_state_by_default(self):
+    def test_bind_user_updates_handle_and_resets_submission_baseline(self):
         self.storage.bind_user("1001", "2002", "old_handle", enable_broadcast=False)
         self.storage.update_last_ac_fingerprint("1001", "2002", "1234-A")
 
@@ -34,7 +35,7 @@ class DataStorageHandlerTest(unittest.TestCase):
 
         self.assertEqual(binding.cf_handle, "new_handle")
         self.assertFalse(binding.enable_broadcast)
-        self.assertEqual(binding.last_ac_fingerprint, "1234-A")
+        self.assertIsNone(binding.last_ac_fingerprint)
         self.assertEqual(self.storage.find_by_handle("old_handle"), [])
         self.assertEqual(self.storage.find_by_handle("NEW_HANDLE"), [binding])
 
@@ -109,6 +110,29 @@ class DataStorageHandlerTest(unittest.TestCase):
             self.storage.bind_user("1001", " ", "tourist")
         with self.assertRaises(ValueError):
             self.storage.bind_user("1001", "2002", " ")
+
+    def test_luogu_binding_uses_uid_and_is_unique_per_group(self):
+        binding = self.storage.bind_luogu_user("1001", "group-1", 8457, "chen_zhe")
+
+        self.assertEqual(binding.luogu_uid, 8457)
+        self.assertEqual(
+            self.storage.get_luogu_binding("1001", "group-1"),
+            binding,
+        )
+        self.assertEqual(
+            self.storage.get_group_luogu_binding_by_uid("group-1", 8457),
+            binding,
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.storage.bind_luogu_user("1002", "group-1", 8457, "chen_zhe")
+
+    def test_luogu_binding_can_be_replaced_and_unbound(self):
+        self.storage.bind_luogu_user("1001", "group-1", 1, "kkksc03")
+        replaced = self.storage.bind_luogu_user("1001", "group-1", 8457, "chen_zhe")
+
+        self.assertEqual(replaced.luogu_uid, 8457)
+        self.assertTrue(self.storage.unbind_luogu_user("1001", "group-1"))
+        self.assertIsNone(self.storage.get_luogu_binding("1001", "group-1"))
 
 
 class AsyncDataStorageHandlerTest(unittest.IsolatedAsyncioTestCase):
