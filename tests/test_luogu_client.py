@@ -89,7 +89,7 @@ class LuoguClientTest(unittest.TestCase):
         self.assertEqual(result.submissions[0].problem_id, "U694435")
         self.assertEqual(result.submissions[0].status, 12)
         self.assertEqual(result.submissions[0].difficulty, 5)
-        self.assertIn("难度：省选/NOI-", result.message)
+        self.assertIn("难度：提高+/省选-", result.message)
         self.assertIn("Accepted", result.message)
 
     @patch("luogu.client.requests.get")
