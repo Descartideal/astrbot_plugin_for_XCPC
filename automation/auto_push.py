@@ -410,6 +410,9 @@ class AutomationPushHandler:
         language = self.luogu_client.LANGUAGE_NAMES.get(
             submission.language, f"语言 #{submission.language}"
         )
+        difficulty = self.luogu_client.DIFFICULTY_NAMES.get(
+            submission.difficulty, "未知"
+        )
         submit_time = datetime.datetime.fromtimestamp(submission.submit_time).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
@@ -417,6 +420,7 @@ class AutomationPushHandler:
             "检测到新的洛谷 AC 提交！",
             f"用户: {binding.luogu_name} (UID: {binding.luogu_uid}，平台用户: {binding.user_id})",
             f"题目: {submission.problem_id} {submission.problem_title}",
+            f"难度: {difficulty}",
             f"得分: {submission.score if submission.score is not None else 100}",
             f"语言: {language}",
             f"提交时间: {submit_time}",

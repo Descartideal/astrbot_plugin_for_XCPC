@@ -55,6 +55,7 @@ class LuoguSubmission:
     username: str
     problem_id: str
     problem_title: str
+    difficulty: int | None
     submit_time: int
     status: int
     score: int | None

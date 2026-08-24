@@ -74,7 +74,7 @@ class LuoguClientTest(unittest.TestCase):
                 "language": 34,
                 "time": 1164,
                 "memory": 28964,
-                "problem": {"pid": "U694435", "title": "D. Prefix Teleporter Sum"},
+                "problem": {"pid": "U694435", "title": "D. Prefix Teleporter Sum", "difficulty": 5},
                 "user": {"uid": 1080507, "name": "Descartideal"},
             }]}}
         }
@@ -88,6 +88,8 @@ class LuoguClientTest(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.submissions[0].problem_id, "U694435")
         self.assertEqual(result.submissions[0].status, 12)
+        self.assertEqual(result.submissions[0].difficulty, 5)
+        self.assertIn("难度：省选/NOI-", result.message)
         self.assertIn("Accepted", result.message)
 
     @patch("luogu.client.requests.get")
@@ -107,7 +109,7 @@ class LuoguClientTest(unittest.TestCase):
                 "language": 34,
                 "time": 1164,
                 "memory": 28964,
-                "problem": {"pid": "U694435", "title": "D. Prefix Teleporter Sum"},
+                "problem": {"pid": "U694435", "title": "D. Prefix Teleporter Sum", "difficulty": 2},
                 "user": {"uid": 1080507, "name": "Descartideal"},
             }]}}
         }

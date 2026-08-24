@@ -36,6 +36,15 @@ class LuoguClient:
         5: "Python 3", 7: "C", 8: "C++14", 9: "C++17", 14: "Go",
         27: "C++20", 28: "C++20 (O2)", 34: "C++23",
     }
+    DIFFICULTY_NAMES = {
+        0: "入门",
+        1: "普及-",
+        2: "普及/提高-",
+        3: "普及+/提高",
+        4: "提高+/省选-",
+        5: "省选/NOI-",
+        6: "NOI/NOI+/CTSC",
+    }
 
     def __init__(self, cookie: str = "") -> None:
         self.cookie = str(cookie or "").strip()
@@ -288,6 +297,7 @@ class LuoguClient:
                     username=user.get("name") if isinstance(user.get("name"), str) else str(uid),
                     problem_id=pid,
                     problem_title=title if isinstance(title, str) else pid,
+                    difficulty=self._optional_int(problem.get("difficulty")),
                     submit_time=submit_time,
                     status=status,
                     score=self._optional_int(item.get("score")),
@@ -315,6 +325,7 @@ class LuoguClient:
         for index, submission in enumerate(result.submissions, 1):
             status = self.STATUS_NAMES.get(submission.status, f"状态 #{submission.status}")
             language = self.LANGUAGE_NAMES.get(submission.language, f"语言 #{submission.language}")
+            difficulty = self.DIFFICULTY_NAMES.get(submission.difficulty, "未知")
             score = "未知" if submission.score is None else str(submission.score)
             resource = []
             if submission.time_ms is not None:
@@ -324,6 +335,7 @@ class LuoguClient:
             lines.extend([
                 f"\n{index}. {submission.problem_id} {submission.problem_title}",
                 f"结果：{status}｜{score} 分｜{language}",
+                f"难度：{difficulty}",
                 f"时间：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(submission.submit_time))}",
                 f"资源：{' / '.join(resource) if resource else '未知'}",
                 f"记录：https://www.luogu.com.cn/record/{submission.id}",
