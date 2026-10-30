@@ -226,7 +226,7 @@ class AutomationPushHandler:
             logger.info(f"查询 handle: {cf_handle}")
             await self._poll_handle_submissions(cf_handle, handle_bindings)
 
-        await self._poll_luogu_submissions()
+        # 洛谷提交自动轮询已关闭；CF 提交播报和其他功能保持不变。
 
     async def _poll_luogu_submissions(self) -> None:
         """按 UID 去重轮询洛谷最新提交并播报新 AC。"""
